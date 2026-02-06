@@ -1,0 +1,10 @@
+Flask
+Flask-SQLAlchemy
+bcrypt
+python-dotenv
+Werkzeug
+boto3
+gunicorn
+moto
+pytest
+pytest-mock

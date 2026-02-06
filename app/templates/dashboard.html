@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}My Orders - BookBazaar{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="page-header">
+        <h1>My Order History</h1>
+        <p class="page-subtitle">Track and manage your book orders</p>
+        {% if session.get('user_role') == 'buyer' %}
+            <div class="seller-cta">
+                <p>Want to sell your own books? <a href="#">Apply to be a seller</a> (Contact Admin)</p>
+            </div>
+        {% endif %}
+    </div>
+
+    {% if orders %}
+        <div class="orders-table-container">
+            <table class="orders-table">
+                <thead>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Book</th>
+                        <th>Qty</th>
+                        <th>Total</th>
+                        <th>Order Tracking</th>
+                        <th>Date</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                        <tr>
+                            <td><span class="order-id">#{{ order.id }}</span></td>
+                            <td class="book-title-cell">
+                                <span class="dashboard-book-title">{{ order.book.title }}</span>
+                                <span class="dashboard-book-author">by {{ order.book.author }}</span>
+                                {% if order.book.seller %}
+                                    <span class="dashboard-book-seller"><small>Sold by: {{ order.book.seller.username }}</small></span>
+                                {% endif %}
+                            </td>
+                            <td>{{ order.quantity }}</td>
+                            <td><strong>₹{{ "%.2f"|format(order.total_price) }}</strong></td>
+                            <td>
+                                <div class="order-tracking">
+                                    <span class="status-badge status-{{ order.status.lower() }}">{{ order.status }}</span>
+                                    <div class="status-timeline">
+                                        <div class="timeline-dot {% if order.status in ['Placed', 'Processing', 'Shipped', 'Delivered'] %}active{% endif %}" title="Placed"></div>
+                                        <div class="timeline-line {% if order.status in ['Processing', 'Shipped', 'Delivered'] %}active{% endif %}"></div>
+                                        <div class="timeline-dot {% if order.status in ['Processing', 'Shipped', 'Delivered'] %}active{% endif %}" title="Processing"></div>
+                                        <div class="timeline-line {% if order.status in ['Shipped', 'Delivered'] %}active{% endif %}"></div>
+                                        <div class="timeline-dot {% if order.status in ['Shipped', 'Delivered'] %}active{% endif %}" title="Shipped"></div>
+                                        <div class="timeline-line {% if order.status == 'Delivered' %}active{% endif %}"></div>
+                                        <div class="timeline-dot {% if order.status == 'Delivered' %}active{% endif %}" title="Delivered"></div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>{{ order.order_date.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>
+                                {% if order.status == 'Placed' %}
+                                    <form action="{{ url_for('bookstore.cancel_order', order_id=order.id) }}" method="POST" onsubmit="return confirm('Are you sure you want to cancel this order?')">
+                                        <button type="submit" class="btn-cancel">Cancel</button>
+                                    </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">📦</div>
+            <h3>No Orders Yet</h3>
+            <p>You haven't placed any orders. Start browsing our collection!</p>
+            <a href="{{ url_for('bookstore.books') }}" class="btn btn-primary">Browse Books</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
