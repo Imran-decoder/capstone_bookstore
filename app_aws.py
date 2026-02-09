@@ -58,7 +58,7 @@ class Notifier:
             return
             
         try:
-            self.aws..publish(
+            self.aws.publish(
                 TopicArn=self.topic_arn,
                 Message=message,
                 Subject="BookBazaar Order Update",
