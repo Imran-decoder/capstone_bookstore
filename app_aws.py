@@ -4,19 +4,24 @@ import sys
 import argparse
 from botocore.exceptions import ClientError
 from decimal import Decimal
-from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash
+# Hardcoded Configuration (Edit these directly)
+AWS_REGION = "us-east-1"
+SNS_TOPIC_ARN = "arn:aws:sns:us-east-1:148761657981:bookstore_notification"
 
-# Load environment variables for CLI usage
-load_dotenv()
+# DynamoDB Table Names
+DYNAMODB_BOOKS_TABLE = "BookBazaarBooks"
+DYNAMODB_USERS_TABLE = "BookBazaarUsers"
+DYNAMODB_ORDERS_TABLE = "BookBazaarOrders"
 
 class AWSApp:
     """Central point for AWS resource management."""
     
     def __init__(self):
-        self.region = os.environ.get('AWS_REGION', 'us-east-1')
+        self.region = AWS_REGION
         self._dynamodb = None
         self._sns = None
-        self._s3 = None
+        self._sns = None
         self._iam = None
 
     def check_iam_permission(self, user_role, resource):
@@ -39,26 +44,26 @@ class AWSApp:
     def sns(self):
         if self._sns is None:
             self._sns = boto3.client('sns', region_name=self.region)
-        return self._
+        return self._sns
 
 # Global instance for easy access
 aws_app = AWSApp()
 
-class Notifier:
-    """AWS  implementation for notifications."""
+class SNSNotifier:
+    """AWS SNS implementation for notifications."""
     
     def __init__(self, aws_instance=None):
         self.aws = aws_instance or aws_app
-        self.topic_arn = os.environ.get('_TOPIC_ARN')
+        self.topic_arn = SNS_TOPIC_ARN
         
     def send(self, email, message):
-        """Publish message to  Topic."""
+        """Publish message to SNS Topic."""
         if not self.topic_arn:
-            print(f"[AWS  MOCK] No Topic ARN found. Notification for {email}: {message}")
+            print(f"[AWS SNS MOCK] No Topic ARN found. Notification for {email}: {message}")
             return
             
         try:
-            self.aws.publish(
+            self.aws.sns.publish(
                 TopicArn=self.topic_arn,
                 Message=message,
                 Subject="BookBazaar Order Update",
@@ -69,39 +74,44 @@ class Notifier:
                     }
                 }
             )
-            print(f"[AWS ] Notification sent to {email}")
+            print(f"[AWS SNS] Notification sent to {email}")
         except ClientError as e:
-            print(f"[AWS  ERROR] {e.response['Error']['Message']}")
+            print(f"[AWS SNS ERROR] {e.response['Error']['Message']}")
 
 class DynamoBookRepository:
     """AWS DynamoDB implementation for Book repository."""
     
     def __init__(self, aws_instance=None):
         self.aws = aws_instance or aws_app
-        self.table_name = os.environ.get('DYNAMODB_BOOKS_TABLE', 'BookBazaarBooks')
+        self.table_name = DYNAMODB_BOOKS_TABLE
         self.table = self.aws.dynamodb.Table(self.table_name)
         
-    def get_all(self):
-        """Scan table for all books."""
+    def get_paginated(self, limit=8, last_key=None):
+        """Query Books table using TypeIndex for efficient pagination."""
         try:
-            response = self.table.scan()
-            return response.get('Items', [])
-        except ClientError as e:
-            print(f"Error scanning DynamoDB: {e.response['Error']['Message']}")
-            return []
+            query_params = {
+                'IndexName': 'TypeIndex',
+                'KeyConditionExpression': boto3.dynamodb.conditions.Key('type').eq('book'),
+                'Limit': limit
+            }
+            if last_key:
+                query_params['ExclusiveStartKey'] = last_key
             
-    def get_by_id(self, book_id):
-        """Get book by Partition Key."""
-        try:
-            response = self.table.get_item(Key={'id': str(book_id)})
-            return response.get('Item')
+            response = self.table.query(**query_params)
+            return {
+                'Items': response.get('Items', []),
+                'LastEvaluatedKey': response.get('LastEvaluatedKey')
+            }
         except ClientError as e:
-            print(f"Error fetching from DynamoDB: {e.response['Error']['Message']}")
-            return None
-            
+            print(f"Error querying DynamoDB: {e.response['Error']['Message']}")
+            return {'Items': [], 'LastEvaluatedKey': None}
+
     def add(self, book_data):
         """Put item into DynamoDB."""
         try:
+            # Add type for GSI grouping
+            book_data['type'] = 'book'
+            
             # Convert float to Decimal for DynamoDB
             if 'price' in book_data:
                 book_data['price'] = Decimal(str(book_data['price']))
@@ -117,7 +127,7 @@ class DynamoUserRepository:
     
     def __init__(self, aws_instance=None):
         self.aws = aws_instance or aws_app
-        self.table_name = os.environ.get('DYNAMODB_USERS_TABLE', 'BookBazaarUsers')
+        self.table_name = DYNAMODB_USERS_TABLE
         self.table = self.aws.dynamodb.Table(self.table_name)
         
     def get_by_email(self, email):
@@ -148,7 +158,7 @@ class DynamoOrderRepository:
     
     def __init__(self, aws_instance=None):
         self.aws = aws_instance or aws_app
-        self.table_name = os.environ.get('DYNAMODB_ORDERS_TABLE', 'BookBazaarOrders')
+        self.table_name = DYNAMODB_ORDERS_TABLE
         self.table = self.aws.dynamodb.Table(self.table_name)
         
     def add(self, order_data):
@@ -174,49 +184,36 @@ class DynamoOrderRepository:
             print(f"Error fetching seller orders: {e.response['Error']['Message']}")
             return []
 
-class S3Uploader:
-    """AWS S3 implementation for file uploads."""
-    
-    def __init__(self, aws_instance=None):
-        self.aws = aws_instance or aws_app
-        self._s3_client = None
-        self.bucket_name = os.environ.get('S3_BUCKET_NAME', 'bookbazaar-assets')
-        
-    @property
-    def client(self):
-        if self._s3_client is None:
-            self._s3_client = boto3.client('s3', region_name=self.aws.region)
-        return self._s3_client
-        
-    def upload_file(self, file_path, object_name=None):
-        """Upload a file to an S3 bucket."""
-        if object_name is None:
-            object_name = os.path.basename(file_path)
-            
-        try:
-            self.client.upload_file(file_path, self.bucket_name, object_name)
-            url = f"https://{self.bucket_name}.s3.{self.aws.region}.amazonaws.com/{object_name}"
-            print(f"[AWS S3] File uploaded to {url}")
-            return url
-        except ClientError as e:
-            print(f"[AWS S3 ERROR] {e}")
-            return None
 
 def setup_aws():
-    """Setup AWS resources (DynamoDB tables and  topics)."""
+    """Setup AWS resources (DynamoDB tables and SNS topics)."""
     print("Setting up AWS resources for BookBazaar...")
     
     # 1. Create Books Table
     try:
-        print("Creating Books table...")
+        print("Creating Books table with TypeIndex GSI...")
         table = aws_app.dynamodb.create_table(
             TableName='BookBazaarBooks',
             KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
-            AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
+            AttributeDefinitions=[
+                {'AttributeName': 'id', 'AttributeType': 'S'},
+                {'AttributeName': 'type', 'AttributeType': 'S'}
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    'IndexName': 'TypeIndex',
+                    'KeySchema': [
+                        {'AttributeName': 'type', 'KeyType': 'HASH'},
+                        {'AttributeName': 'id', 'KeyType': 'RANGE'}
+                    ],
+                    'Projection': {'ProjectionType': 'ALL'},
+                    'ProvisionedThroughput': {'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
+                }
+            ],
             ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
         )
         table.wait_until_exists()
-        print("✓ Books table created.")
+        print("✓ Books table created with indexing.")
     except Exception as e:
         print(f"Books table: {e}")
 
@@ -234,7 +231,7 @@ def setup_aws():
     except Exception as e:
         print(f"Orders table: {e}")
 
-    # 3. Create  Topic
+    # 3. Create SNS Topic
     try:
         print("Creating SNS Topic...")
         response = aws_app.sns.create_topic(Name='BookBazaarNotifications')
@@ -257,14 +254,6 @@ def setup_aws():
     except Exception as e:
         print(f"Users table: {e}")
 
-    # 5. Create S3 Bucket (Mocked for setup)
-    try:
-        print("Creating S3 Bucket...")
-        s3 = boto3.client('s3', region_name=aws_app.region)
-        s3.create_bucket(Bucket='bookbazaar-assets')
-        print("✓ S3 Bucket created.")
-    except Exception as e:
-        print(f"S3 bucket: {e}")
 
     print("\nAWS environment setup complete.")
 
@@ -289,12 +278,11 @@ def verify_aws():
     except Exception as e:
         print(f"FAILED ({e})")
 
-    # 2. Test SNS
     try:
         print("SNS: ", end="", flush=True)
-        topic_arn = "arn:aws:sns:us-east-1:148761657981:bookstore_notification"
-        if not topic_arn:
-            print("SKIPPED (No SNS_TOPIC_ARN in .env)")
+        topic_arn = SNS_TOPIC_ARN
+        if not topic_arn or "123456789012" in topic_arn:
+            print("SKIPPED (Update SNS_TOPIC_ARN at the top of app_aws.py)")
         else:
             notifier = SNSNotifier()
             notifier.send("test@example.com", "Connectivity verification")
@@ -302,9 +290,122 @@ def verify_aws():
     except Exception as e:
         print(f"FAILED ({e})")
 
+def seed_db():
+    """Seed DynamoDB tables from CSV files."""
+    import csv
+    import os
+    
+    # Path setup
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_path, 'data')
+    
+    if not os.path.exists(data_dir):
+        print(f"[ERROR] Data directory not found at {data_dir}")
+        return
+
+    print(f"Seeding data from {data_dir}...")
+    user_repo = DynamoUserRepository()
+    book_repo = DynamoBookRepository()
+    order_repo = DynamoOrderRepository()
+
+    # 1. Seed Users
+    user_map = {} # username -> id mapping for relationships
+    try:
+        with open(os.path.join(data_dir, 'users.csv'), 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader, 1):
+                user_id = f"u{i}"
+                user_data = {
+                    'id': user_id,
+                    'username': row['username'],
+                    'email': row['email'],
+                    'role': row['role'],
+                    'is_validated': row['is_validated'].lower() == 'true',
+                    'password_hash': generate_password_hash(row['password'])
+                }
+                user_repo.add(user_data)
+                user_map[row['username']] = user_id
+                print(f"  Added user: {row['username']}")
+        print("✓ Users seeded.")
+    except Exception as e:
+        print(f"Error seeding users: {e}")
+
+    # 2. Seed Books
+    book_map = {} # title -> id
+    try:
+        with open(os.path.join(data_dir, 'books.csv'), 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader, 1):
+                book_id = f"b{i}"
+                seller_id = user_map.get(row['seller_username'], 'u1')
+                book_data = {
+                    'id': book_id,
+                    'title': row['title'],
+                    'author': row['author'],
+                    'description': row['description'],
+                    'price': float(row['price']),
+                    'stock': int(row['stock']),
+                    'image_url': row['image_url'],
+                    'seller_id': seller_id
+                }
+                book_repo.add(book_data)
+                book_map[row['title']] = book_id
+        print("✓ Books seeded.")
+    except Exception as e:
+        print(f"Error seeding books: {e}")
+
+    # 3. Seed Orders
+    try:
+        with open(os.path.join(data_dir, 'orders.csv'), 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader, 1):
+                order_data = {
+                    'id': f"o{i}",
+                    'user_id': user_map.get(row['buyer_username'], 'u1'),
+                    'book_id': book_map.get(row['book_title'], 'b1'),
+                    'quantity': int(row['quantity']),
+                    'total_price': float(row['total_price']),
+                    'status': row['status'],
+                    'order_date': row['order_date']
+                }
+                order_repo.add(order_data)
+        print("✓ Orders seeded.")
+    except Exception as e:
+        print(f"Error seeding orders: {e}")
+    
+    print("\n✓ DynamoDB Seeding complete!")
+
+def run_server():
+    """Start the Flask web server."""
+    print("Starting BookBazaar Web Server on AWS...")
+    print("Accessible at: http://YOUR-EC2-PUBLIC-IP:5000")
+    
+    # Ensure current directory is in path
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    try:
+        from app import create_app
+        app = create_app()
+        # Ensure it listens on 0.0.0.0 for EC2 access
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except ImportError as e:
+        print(f"\n[ERROR] Module import failed: {e}")
+        print("This usually means a dependency (like Flask) is not installed.")
+        print("Try running: pip3 install -r requirements.txt")
+        import traceback
+        traceback.print_exc()
+    except Exception as e:
+        print(f"\n[ERROR] Failed to start server: {e}")
+        import traceback
+        traceback.print_exc()
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BookBazaar AWS Utility")
-    parser.add_argument("command", choices=["setup", "verify"], help="Command to run")
+    parser.add_argument("command", choices=["setup", "verify", "run", "seed"], 
+                        nargs='?', default="run",
+                        help="Command to run (setup, verify, run, seed). Default is 'run'.")
     
     args = parser.parse_args()
     
@@ -312,3 +413,7 @@ if __name__ == "__main__":
         setup_aws()
     elif args.command == "verify":
         verify_aws()
+    elif args.command == "run":
+        run_server()
+    elif args.command == "seed":
+        seed_db()
