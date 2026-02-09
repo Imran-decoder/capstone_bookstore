@@ -39,26 +39,26 @@ class AWSApp:
     def sns(self):
         if self._sns is None:
             self._sns = boto3.client('sns', region_name=self.region)
-        return self._sns
+        return self._
 
 # Global instance for easy access
 aws_app = AWSApp()
 
-class SNSNotifier:
-    """AWS SNS implementation for notifications."""
+class Notifier:
+    """AWS  implementation for notifications."""
     
     def __init__(self, aws_instance=None):
         self.aws = aws_instance or aws_app
-        self.topic_arn = os.environ.get('SNS_TOPIC_ARN')
+        self.topic_arn = os.environ.get('_TOPIC_ARN')
         
     def send(self, email, message):
-        """Publish message to SNS Topic."""
+        """Publish message to  Topic."""
         if not self.topic_arn:
-            print(f"[AWS SNS MOCK] No Topic ARN found. Notification for {email}: {message}")
+            print(f"[AWS  MOCK] No Topic ARN found. Notification for {email}: {message}")
             return
             
         try:
-            self.aws.sns.publish(
+            self.aws..publish(
                 TopicArn=self.topic_arn,
                 Message=message,
                 Subject="BookBazaar Order Update",
@@ -69,9 +69,9 @@ class SNSNotifier:
                     }
                 }
             )
-            print(f"[AWS SNS] Notification sent to {email}")
+            print(f"[AWS ] Notification sent to {email}")
         except ClientError as e:
-            print(f"[AWS SNS ERROR] {e.response['Error']['Message']}")
+            print(f"[AWS  ERROR] {e.response['Error']['Message']}")
 
 class DynamoBookRepository:
     """AWS DynamoDB implementation for Book repository."""
@@ -203,7 +203,7 @@ class S3Uploader:
             return None
 
 def setup_aws():
-    """Setup AWS resources (DynamoDB tables and SNS topics)."""
+    """Setup AWS resources (DynamoDB tables and  topics)."""
     print("Setting up AWS resources for BookBazaar...")
     
     # 1. Create Books Table
@@ -234,7 +234,7 @@ def setup_aws():
     except Exception as e:
         print(f"Orders table: {e}")
 
-    # 3. Create SNS Topic
+    # 3. Create  Topic
     try:
         print("Creating SNS Topic...")
         response = aws_app.sns.create_topic(Name='BookBazaarNotifications')
@@ -292,7 +292,7 @@ def verify_aws():
     # 2. Test SNS
     try:
         print("SNS: ", end="", flush=True)
-        topic_arn = os.environ.get('SNS_TOPIC_ARN')
+        topic_arn = os.environ.get('arn:aws:sns:us-east-1:148761657981:bookstore_notification')
         if not topic_arn:
             print("SKIPPED (No SNS_TOPIC_ARN in .env)")
         else:
