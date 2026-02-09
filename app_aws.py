@@ -292,7 +292,7 @@ def verify_aws():
     # 2. Test SNS
     try:
         print("SNS: ", end="", flush=True)
-        topic_arn = os.environ.get('arn:aws:sns:us-east-1:148761657981:bookstore_notification')
+        topic_arn = "arn:aws:sns:us-east-1:148761657981:bookstore_notification"
         if not topic_arn:
             print("SKIPPED (No SNS_TOPIC_ARN in .env)")
         else:
